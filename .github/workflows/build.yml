@@ -1,0 +1,50 @@
+
+name: Build OpenCat
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            clang \
+            cmake \
+            libavcodec-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libavfilter-dev \
+            libswscale-dev \
+            libswresample-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Fetch prebuilt dependencies
+        run: sh docker/fetch-prebuilt.sh
+
+      - name: Build
+        run: cargo build --release -p opencat
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencat-linux-x86_64
+          path: target/release/opencat
