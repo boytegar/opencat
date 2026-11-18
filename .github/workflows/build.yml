@@ -3,49 +3,84 @@ name: Build OpenCat
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
+    name: Build OpenCat Linux x86_64
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install dependencies
+      - name: Install System Dependencies
         run: |
-            sudo apt-get update
-            sudo apt-get install -y \
-              build-essential \
-              pkg-config \
-              clang \
-              cmake \
-              libavcodec-dev \
-              libavformat-dev \
-              libavutil-dev \
-              libavfilter-dev \
-              libswscale-dev \
-              libswresample-dev \
-              libasound2-dev
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            clang \
+            cmake \
+            nasm \
+            yasm \
+            libasound2-dev \
+            ffmpeg \
+            libavcodec-dev \
+            libavdevice-dev \
+            libavfilter-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswresample-dev \
+            libswscale-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Fetch prebuilt dependencies
-        run: sh docker/fetch-prebuilt.sh
+      - name: Check Rust
+        run: |
+          rustc --version
+          cargo --version
 
-      - name: Build
+      - name: Check FFmpeg
+        run: |
+          ffmpeg -version
+          pkg-config --modversion libavcodec
+          pkg-config --modversion libavformat
+          pkg-config --modversion libavdevice
+          pkg-config --modversion libavfilter
+          pkg-config --modversion libavutil
+          pkg-config --modversion libswresample
+          pkg-config --modversion libswscale
+
+      - name: Fetch Prebuilt Dependencies
+        run: |
+          if [ -f docker/fetch-prebuilt.sh ]; then
+            sh docker/fetch-prebuilt.sh
+          else
+            echo "fetch-prebuilt.sh not found, skipping"
+          fi
+
+      - name: Build OpenCat
         run: cargo build --release -p opencat
 
-      - name: Upload binary
+      - name: Verify Binary
+        run: |
+          ls -lh target/release/opencat
+          file target/release/opencat
+
+      - name: Upload Linux Binary
         uses: actions/upload-artifact@v4
         with:
           name: opencat-linux-x86_64
           path: target/release/opencat
+          if-no-files-found: error
+          retention-days: 30
