@@ -3,35 +3,45 @@ name: Build OpenCat
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*"
+
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (e.g. v2)"
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
-    name: Build OpenCat Linux x86_64
+    name: Build OpenCat Linux x86_64 (Debian 13 / FFmpeg 7)
     runs-on: ubuntu-24.04
 
+    container:
+      image: debian:trixie
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install System Dependencies
+      - name: Install Git and System Dependencies
         run: |
-          sudo apt-get update
+          apt-get update
 
-          sudo apt-get install -y \
+          apt-get install -y \
+            git \
+            curl \
+            ca-certificates \
             build-essential \
             pkg-config \
             clang \
             cmake \
             nasm \
             yasm \
+            zip \
+            file \
+            binutils \
             libasound2-dev \
             ffmpeg \
             libavcodec-dev \
@@ -42,12 +52,18 @@ jobs:
             libswresample-dev \
             libswscale-dev \
             libgl1-mesa-dev \
-            libegl1-mesa-dev \
+            libegl-dev \
             libgles2-mesa-dev \
             libwayland-dev \
             libx11-dev \
             libfontconfig1-dev \
             libfreetype-dev
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -57,9 +73,10 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Check FFmpeg
+      - name: Check FFmpeg 7
         run: |
           ffmpeg -version
+
           pkg-config --modversion libavcodec
           pkg-config --modversion libavformat
           pkg-config --modversion libavdevice
@@ -67,6 +84,8 @@ jobs:
           pkg-config --modversion libavutil
           pkg-config --modversion libswresample
           pkg-config --modversion libswscale
+
+          test "$(pkg-config --modversion libavcodec | cut -d. -f1)" = "61"
 
       - name: Fetch Prebuilt Dependencies
         run: |
@@ -77,17 +96,75 @@ jobs:
           fi
 
       - name: Build OpenCat
-        run: cargo build --release -p opencat
+        run: |
+          cargo build --release -p opencat
 
       - name: Verify Binary
         run: |
           ls -lh target/release/opencat
           file target/release/opencat
 
-      - name: Upload Linux Binary
-        uses: actions/upload-artifact@v4
+          echo "Checking shared libraries..."
+          ldd target/release/opencat
+
+          if ldd target/release/opencat | grep -q "not found"; then
+            echo "ERROR: Missing shared libraries"
+            exit 1
+          fi
+
+      - name: Package Binary
+        run: |
+          mkdir -p release
+
+          cp target/release/opencat release/opencat
+
+          cd release
+
+          zip -9 opencat-linux-x86_64.zip opencat
+
+          ls -lh opencat-linux-x86_64.zip
+
+      - name: Create Release Notes
+        run: |
+          TAG="${{ inputs.release_tag || github.ref_name }}"
+
+          cat > RELEASE_NOTES.md <<EOF
+          ## OpenCat Linux x86_64
+
+          Built on Debian 13 (Trixie) with FFmpeg 7.
+
+          ### Download & Install
+
+          \`\`\`bash
+          curl -fL -o opencat-linux-x86_64.zip https://github.com/boytegar/opencat/releases/download/${TAG}/opencat-linux-x86_64.zip
+
+          python3 -m zipfile -e opencat-linux-x86_64.zip .
+
+          sudo install -m 755 opencat /usr/local/bin/opencat
+          \`\`\`
+
+          ### Verify
+
+          \`\`\`bash
+          opencat --version
+          \`\`\`
+
+          ### Requirements
+
+          - Debian 13 (Trixie)
+          - FFmpeg 7 runtime libraries
+          - EGL / OpenGL libraries
+
+          EOF
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: opencat-linux-x86_64
-          path: target/release/opencat
-          if-no-files-found: error
-          retention-days: 30
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: OpenCat ${{ inputs.release_tag || github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: release/opencat-linux-x86_64.zip
+          generate_release_notes: false
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
